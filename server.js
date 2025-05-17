@@ -1,39 +1,40 @@
-const express = require('express');
-const fetch = require('node-fetch');
+const express = require("express");
+const fetch = require("node-fetch");
+require("dotenv").config();
+
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-const SHOPIFY_STORE = 'test-1300655506.myshopify.com';
-const ACCESS_TOKEN = '881c8712ea55a867e62e0b4c848eaeb9'; // Your Storefront Access Token
+app.get("/apps/vehicle-search", async (req, res) => {
+  const { make, model, year } = req.query;
 
-app.use(express.json());
-
-// Enable CORS for all origins (for demo, you can restrict to your frontend domain)
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*'); 
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-
-app.get('/search', async (req, res) => {
-  const { make, model } = req.query;
-  if (!make || !model) {
-    return res.status(400).json({ error: 'Make and model query parameters required' });
+  if (!make || !model || !year) {
+    return res.status(400).json({ error: "Missing query params" });
   }
 
-  const queryStr = `metafield:custom.make:'${make}' metafield:custom.model:'${model}'`;
-
-  const graphqlQuery = `
+  const query = `
     {
-      products(first: 100, query: "${queryStr}") {
+      products(first: 20, query: "metafield:vehicle.make='${make}' metafield:vehicle.model='${model}' metafield:vehicle.year='${year}'") {
         edges {
           node {
+            id
             title
-            handle
-            metafields(namespace: "custom", keys: ["make", "model"]) {
-              key
-              value
+            onlineStoreUrl
+            images(first: 1) {
+              edges {
+                node {
+                  originalSrc
+                }
+              }
+            }
+            variants(first: 1) {
+              edges {
+                node {
+                  price {
+                    amount
+                  }
+                }
+              }
             }
           }
         }
@@ -42,26 +43,31 @@ app.get('/search', async (req, res) => {
   `;
 
   try {
-    const response = await fetch(`https://${SHOPIFY_STORE}/api/2023-10/graphql.json`, {
-      method: 'POST',
+    const response = await fetch(`${process.env.SHOPIFY_STORE}/admin/api/2023-10/graphql.json`, {
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Storefront-Access-Token': ACCESS_TOKEN,
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN
       },
-      body: JSON.stringify({ query: graphqlQuery }),
+      body: JSON.stringify({ query })
     });
 
-    const json = await response.json();
-    if (json.errors) {
-      return res.status(500).json({ errors: json.errors });
-    }
+    const data = await response.json();
 
-    // Return product edges directly
-    res.json(json.data.products.edges);
+    const products = data.data.products.edges.map(({ node }) => ({
+      title: node.title,
+      image: node.images.edges[0]?.node.originalSrc || "",
+      price: `$${node.variants.edges[0]?.node.price.amount || "0.00"}`,
+      url: node.onlineStoreUrl
+    }));
+
+    res.json(products);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Error fetching products:", error);
+    res.status(500).json({ error: "Failed to fetch products" });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Proxy server listening on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
